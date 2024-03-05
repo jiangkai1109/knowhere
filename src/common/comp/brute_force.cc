@@ -18,6 +18,7 @@
 #include "faiss/MetricType.h"
 #include "faiss/utils/binary_distances.h"
 #include "faiss/utils/distances.h"
+#include "faiss/utils/onednn_utils.h"
 #include "knowhere/bitsetview_idselector.h"
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/config.h"
@@ -86,6 +87,13 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
     auto labels = std::make_unique<int64_t[]>(nq * topk);
     auto distances = std::make_unique<float[]>(nq * topk);
 
+    if (faiss::is_dnnl_enabled() && faiss_metric_type == faiss::METRIC_INNER_PRODUCT) {
+        BitsetViewIDSelector bw_idselector(bitset);
+        faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
+
+	faiss::float_minheap_array_t buf{(size_t)nq, (size_t)topk, labels.get(), distances.get()};
+        faiss::knn_inner_product((const float*)xq, (const float*)xb, dim, nq, nb, &buf, id_selector);
+    } else {
     auto pool = ThreadPool::GetGlobalSearchThreadPool();
     std::vector<folly::Future<Status>> futs;
     futs.reserve(nq);
@@ -154,12 +162,14 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
         return expected<DataSetPtr>::Err(ret, "failed to brute force search");
     }
     auto res = GenResultDataSet(nq, cfg.k.value(), labels.release(), distances.release());
-
+    return res;
+    }//else
 #ifdef NOT_COMPILE_FOR_SWIG
     if (cfg.trace_id.has_value()) {
         span->End();
     }
 #endif
+    auto res = GenResultDataSet(nq, cfg.k.value(), labels.release(), distances.release());
 
     return res;
 }

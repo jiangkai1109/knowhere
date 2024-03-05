@@ -212,6 +212,9 @@ set(FAISS_HEADERS
 # if(NOT WIN32)
   list(APPEND FAISS_SRC invlists/OnDiskInvertedLists.cpp)
   list(APPEND FAISS_HEADERS invlists/OnDiskInvertedLists.h)
+  target_compile_options(faiss PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-mamx-tile -mamx-int8>)
+  target_compile_options(faiss_avx2 PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-mamx-tile -mamx-int8 -mavx2 -mfma -mf16c -mpopcnt>)
+
 # endif()
 
 # Export FAISS_HEADERS variable to parent scope.
@@ -257,6 +260,14 @@ endif()
 target_compile_definitions(faiss PRIVATE FINTEGER=int)
 target_compile_options(faiss PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-msse4.2 -mpopcnt>)
 #target_compile_definitions(faiss_avx2 PRIVATE FINTEGER=int)
+
+find_library(RT_LIB rt)
+find_library(DNNL_LIB dnnl)
+message(DNNL_LIB=${DNNL_LIB})
+target_link_libraries(faiss PRIVATE ${RT_LIB} ${DNNL_LIB})
+target_link_libraries(faiss_avx2 PRIVATE ${RT_LIB} ${DNNL_LIB})
+
+
 
 find_package(OpenMP REQUIRED)
 target_link_libraries(faiss PRIVATE OpenMP::OpenMP_CXX)

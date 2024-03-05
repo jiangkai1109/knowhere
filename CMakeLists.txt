@@ -92,6 +92,15 @@ find_package(prometheus-cpp REQUIRED)
 find_package(fmt REQUIRED)
 find_package(opentelemetry-cpp REQUIRED)
 
+
+find_package(DNNL REQUIRED)
+find_library(RT_LIB rt)
+find_library(DNNL_LIB dnnl)
+message(DNNL_LIB=${DNNL_LIB})
+target_link_libraries(faiss PRIVATE ${RT_LIB} ${DNNL_LIB})
+target_link_libraries(faiss_avx2 PRIVATE ${RT_LIB} ${DNNL_LIB})
+
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum OS X deployment version" FORCE)
 

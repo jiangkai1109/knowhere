@@ -26,6 +26,7 @@
 #include <faiss/impl/IDSelector.h>
 #include <faiss/impl/ResultHandler.h>
 #include <faiss/utils/utils.h>
+#include <faiss/utils/onednn_utils.h>
 
 #ifndef FINTEGER
 #define FINTEGER long
@@ -183,6 +184,33 @@ void exhaustive_inner_product_seq(
     using SingleResultHandler = typename ResultHandler::SingleResultHandler;
     int nt = std::min(int(nx), omp_get_max_threads());
 
+    if (is_dnnl_enabled()) {
+        float *res_arr = (float *)malloc(nx * ny * sizeof(float));
+    //   init_onednn();
+    //     printf("init_onednn\n");
+    //     std::fflush(stdout);
+
+        comput_f32bf16f32_inner_product(nx, d, ny, d, const_cast<float*>(x), const_cast<float*>(y), res_arr);
+
+    	#pragma omp parallel num_threads(nt)
+    	{
+    	SingleResultHandler resi(res);
+    	#pragma omp for
+            for(size_t i = 0; i < nx; i++) {
+            	resi.begin(i);
+                for(size_t j = 0; j < ny; j++){
+                    float ip = res_arr[i*ny + j];
+                    resi.add_result(ip , j);
+                }
+                resi.end();
+            }
+    	}
+
+        delete[] res_arr;
+
+
+    } else {
+
 #pragma omp parallel num_threads(nt)
     {
         SingleResultHandler resi(res);
@@ -209,6 +237,7 @@ void exhaustive_inner_product_seq(
     }
 }
 
+}
 
 template <class ResultHandler>
 void exhaustive_inner_product_seq(
@@ -223,7 +252,6 @@ void exhaustive_inner_product_seq(
     //   helpers which are converted into templates.
 
     // bitset.empty() translates into sel=nullptr
-
     if (const auto* bitsetview_sel = dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel)) {
         // A specialized case for Knowhere
         auto bitset = bitsetview_sel->bitset_view;
@@ -414,7 +442,6 @@ void exhaustive_inner_product_blas(
     // BLAS does not like empty matrices
     if (nx == 0 || ny == 0)
         return;
-
     /* block sizes */
     const size_t bs_x = distance_compute_blas_query_bs;
     const size_t bs_y = distance_compute_blas_database_bs;
@@ -721,6 +748,7 @@ void knn_inner_product(
     if (ha->k < distance_compute_min_k_reservoir) {
         HeapResultHandler<CMin<float, int64_t>> res(
                 ha->nh, ha->val, ha->ids, ha->k);
+
         if (nx < distance_compute_blas_threshold) {
             exhaustive_inner_product_seq(x, y, d, nx, ny, res, sel);
         } else {

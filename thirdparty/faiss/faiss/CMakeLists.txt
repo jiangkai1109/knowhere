@@ -91,6 +91,7 @@ set(FAISS_SRC
   utils/Heap.cpp
   utils/WorkerThread.cpp
   utils/binary_distances.cpp
+  utils/onednn_utils.cpp
   utils/distances.cpp
   utils/distances_simd.cpp
   utils/extra_distances.cpp
@@ -190,6 +191,7 @@ set(FAISS_HEADERS
   utils/Heap.h
   utils/WorkerThread.h
   utils/binary_distances.h
+  utils/onednn_utils.h
   utils/distances.h
   utils/extra_distances-inl.h
   utils/extra_distances.h

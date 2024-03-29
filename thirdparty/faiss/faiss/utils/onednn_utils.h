@@ -11,9 +11,14 @@
 
 #pragma once
 #include <stdlib.h>
+#include <string.h>
 #include <mutex>
-#include <shared_mutex>
+#include <atomic>
+#include <memory>
+#include <pthread.h>
 #include "oneapi/dnnl/dnnl.hpp"
+#include <faiss/impl/ResultHandler.h>
+#include <mm_malloc.h>
 
 namespace faiss {
 static dnnl::engine cpu_engine;
@@ -83,42 +88,130 @@ static void library_load() {
  * @param out_f32 Output matrix pointer for result in float32 type
  * @return None
  */
-static void comput_f32bf16f32_inner_product(uint32_t xrow, uint32_t xcol, uint32_t yrow, uint32_t ycol,
-    float* in_f32_1, float* in_f32_2, float* out_f32) {
 
-  dnnl::memory::desc f32_md1 = dnnl::memory::desc({xrow, xcol}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::ab);
-  dnnl::memory::desc f32_md2 = dnnl::memory::desc({yrow, ycol}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::ab);
-  dnnl::memory::desc f32_dst_md2 = dnnl::memory::desc({xrow, yrow}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::ab);
+enum BASE_DATA_STATE {
+  MODIFIED,
+  PREPARE,
+  READY
+};
+static std::atomic<BASE_DATA_STATE> is_base_changed(BASE_DATA_STATE::MODIFIED);
+static void* base_data_handle = NULL;
+static pthread_rwlock_t rwlock = PTHREAD_RWLOCK_INITIALIZER;
 
-  dnnl::memory f32_mem1 = dnnl::memory(f32_md1, cpu_engine, in_f32_1);
-  dnnl::memory f32_mem2 = dnnl::memory(f32_md2, cpu_engine, in_f32_2);
-  dnnl::memory f32_dst_mem = dnnl::memory(f32_dst_md2, cpu_engine, out_f32); 
+struct inner_product_desc {
+  uint32_t xrow;
+  uint32_t xcol;
+  uint32_t yrow;
+  uint32_t ycol;
+  float* in_f32_1;
+  float* in_f32_2;
+  float* out_f32;
+  dnnl::memory::desc f32_md1;
+  dnnl::memory::desc f32_md2;
+  dnnl::memory::desc f32_dst_md2;
+  dnnl::memory f32_mem1;
+  dnnl::memory f32_mem2;
+  dnnl::memory f32_dst_mem;
 
-  // inner memory bf16
-  dnnl::memory::desc bf16_md1 = dnnl::memory::desc({xrow, xcol}, dnnl::memory::data_type::bf16, dnnl::memory::format_tag::any);
-  dnnl::memory::desc bf16_md2 = dnnl::memory::desc({yrow, ycol}, dnnl::memory::data_type::bf16, dnnl::memory::format_tag::any); 
+  dnnl::memory::desc bf16_md1;
+  dnnl::memory::desc bf16_md2;
 
+  dnnl::inner_product_forward::primitive_desc inner_product_pd;
+  dnnl::inner_product_forward inner_product_prim;
+
+  dnnl::memory bf16_mem1;
+  dnnl::memory bf16_mem2;
   
-  dnnl::inner_product_forward::primitive_desc inner_product_pd = dnnl::inner_product_forward::primitive_desc(
-      cpu_engine, dnnl::prop_kind::forward_training,
-      bf16_md1, bf16_md2, f32_dst_md2);
 
-  dnnl::inner_product_forward inner_product_prim = dnnl::inner_product_forward(inner_product_pd);
+  bool is_same(uint32_t xrow, uint32_t xcol, uint32_t yrow, uint32_t ycol,
+    float* in_f32_1, float* in_f32_2) {
+    return this->xrow == xrow && this->xcol == xcol && this->yrow == yrow && this->ycol == ycol && this->in_f32_2 == in_f32_2;
+  }
 
-  dnnl::memory bf16_mem1 = dnnl::memory(inner_product_pd.src_desc(), cpu_engine);
-  dnnl::reorder(f32_mem1, bf16_mem1).execute(engine_stream, f32_mem1, bf16_mem1);
- 
-  dnnl::memory bf16_mem2 = dnnl::memory(inner_product_pd.weights_desc(), cpu_engine);
-  dnnl::reorder(f32_mem2, bf16_mem2).execute(engine_stream, f32_mem2, bf16_mem2);
+  void init(uint32_t xrow, uint32_t xcol, uint32_t yrow, uint32_t ycol,
+    float* in_f32_1, float* in_f32_2) {
+    if (is_same(xrow, xcol, yrow, ycol, in_f32_1, in_f32_2)) {
+      if (this->in_f32_1 != in_f32_1) {
+        this->in_f32_1 = in_f32_1;
+        f32_mem1 = dnnl::memory(f32_md1, cpu_engine, in_f32_1);
+      }
+      return;
+    }
+    
+    this->xrow = xrow;
+    this->xcol = xcol;
+    this->yrow = yrow;
+    this->ycol = ycol;
+    this->in_f32_1 = in_f32_1;
+    this->in_f32_2 = in_f32_2;
 
-  inner_product_prim.execute(engine_stream, {{DNNL_ARG_SRC, bf16_mem1},
-                                             {DNNL_ARG_WEIGHTS, bf16_mem2},
-                                             {DNNL_ARG_DST, f32_dst_mem}});
- 
-  // Wait for the computation to finalize.
-  engine_stream.wait();
- 
-  // printf("comput_f32bf16f32_inner_product finished#######>\n");
-}
+    f32_md1 = dnnl::memory::desc({xrow, xcol}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::ab);
+    f32_md2 = dnnl::memory::desc({yrow, ycol}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::ab);
+    f32_dst_md2 = dnnl::memory::desc({xrow, yrow}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::ab);
+
+    f32_mem1 = dnnl::memory(f32_md1, cpu_engine, in_f32_1);
+    f32_mem2 = dnnl::memory(f32_md2, cpu_engine, in_f32_2);
+    f32_dst_mem = dnnl::memory(f32_dst_md2, cpu_engine); 
+
+    // inner memory bf16
+    bf16_md1 = dnnl::memory::desc({xrow, xcol}, dnnl::memory::data_type::bf16, dnnl::memory::format_tag::any);
+    bf16_md2 = dnnl::memory::desc({yrow, ycol}, dnnl::memory::data_type::bf16, dnnl::memory::format_tag::any); 
+
+    inner_product_pd = dnnl::inner_product_forward::primitive_desc(
+          cpu_engine, dnnl::prop_kind::forward_training,
+          bf16_md1, bf16_md2, f32_dst_md2);
+
+
+    inner_product_prim = dnnl::inner_product_forward(inner_product_pd);     
+
+    bf16_mem1 = dnnl::memory(inner_product_pd.src_desc(), cpu_engine);
+    // bf16_mem2 = dnnl::memory(inner_product_pd.weights_desc(), cpu_engine, base_data_handle);    
+  }
+
+  void execut(float** out_f32) {
+    dnnl::reorder(f32_mem1, bf16_mem1).execute(engine_stream, f32_mem1, bf16_mem1);
+    BASE_DATA_STATE expected = BASE_DATA_STATE::MODIFIED;
+    if (is_base_changed.compare_exchange_strong(expected, BASE_DATA_STATE::PREPARE)) {
+      pthread_rwlock_wrlock(&rwlock); 
+
+      base_data_handle = _mm_malloc(yrow*ycol*sizeof(u_int16_t), 64);
+      bf16_mem2 = dnnl::memory(inner_product_pd.weights_desc(), cpu_engine, base_data_handle); 
+      dnnl::reorder(f32_mem2, bf16_mem2).execute(engine_stream, f32_mem2, bf16_mem2);      
+      inner_product_prim.execute(engine_stream, {{DNNL_ARG_SRC, bf16_mem1},
+                                                    {DNNL_ARG_WEIGHTS, bf16_mem2},
+                                                    {DNNL_ARG_DST, f32_dst_mem}});
+      is_base_changed.store(BASE_DATA_STATE::READY);
+      pthread_rwlock_unlock(&rwlock);                                                    
+
+    } else {
+      
+      while(is_base_changed != BASE_DATA_STATE::READY) {
+      }
+
+      pthread_rwlock_rdlock(&rwlock); 
+
+      bf16_mem2 = dnnl::memory(inner_product_pd.weights_desc(), cpu_engine, base_data_handle);  
+      inner_product_prim.execute(engine_stream, {{DNNL_ARG_SRC, bf16_mem1},
+                                                {DNNL_ARG_WEIGHTS, bf16_mem2},
+                                                {DNNL_ARG_DST, f32_dst_mem}});
+      pthread_rwlock_unlock(&rwlock);
+    }
+
+    if (f32_dst_mem.get_data_handle() == NULL) {
+        printf("f32_dst_mem.get_data_handle()  = NULL\n");
+        fflush(stderr);
+        exit(1);
+    }
+
+    *out_f32 = (float*) f32_dst_mem.get_data_handle();
+  }
+};
+
+
+
+void comput_f32bf16f32_inner_product(uint32_t xrow, uint32_t xcol, uint32_t yrow, uint32_t ycol,
+    float* in_f32_1, float* in_f32_2, float** out_f32);
 
 }//namespace faiss
+
+extern thread_local faiss::inner_product_desc inner_product_desc_t;

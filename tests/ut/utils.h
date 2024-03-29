@@ -25,6 +25,19 @@
 #include "knowhere/binaryset.h"
 #include "knowhere/dataset.h"
 #include "knowhere/version.h"
+#include <sys/time.h>
+
+class queryvar{
+    public:
+      knowhere::DataSetPtr train_ds;
+      knowhere::DataSetPtr query_ds;
+      knowhere::Json conf;
+    queryvar(knowhere::DataSetPtr train_ds,knowhere::DataSetPtr query_ds,knowhere::Json conf){
+      this->train_ds=train_ds;
+      this->query_ds=query_ds;
+      this->conf=conf;
+    }
+};
 
 constexpr int64_t kSeed = 42;
 using IdDisPair = std::pair<int64_t, float>;
@@ -35,11 +48,24 @@ struct DisPairLess {
     }
 };
 
+auto
+WrapSearch(queryvar queryvar1){
+    struct timeval t1,t2;
+    double timeuse;
+    gettimeofday(&t1,NULL);
+    auto res = knowhere::BruteForce::Search<knowhere::fp32>(queryvar1.train_ds, queryvar1.query_ds, queryvar1.conf, nullptr);
+    gettimeofday(&t2,NULL);
+    timeuse = (t2.tv_sec - t1.tv_sec) + (double)(t2.tv_usec - t1.tv_usec)/1000000.0;
+    std::cout << "elpased: \n" << timeuse << std::endl;
+    return res;
+}
+
 inline knowhere::DataSetPtr
 GenDataSet(int rows, int dim, int seed = 42) {
     std::mt19937 rng(seed);
     std::uniform_int_distribution<> distrib(0.0, 100.0);
     float* ts = new float[rows * dim];
+    // float* ts = (float*)_mm_malloc(rows * dim * sizeof(float), 64);
     for (int i = 0; i < rows * dim; ++i) ts[i] = (float)distrib(rng);
     auto ds = knowhere::GenDataSet(rows, dim, ts);
     ds->SetIsOwner(true);

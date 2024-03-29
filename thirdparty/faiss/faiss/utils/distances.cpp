@@ -185,12 +185,15 @@ void exhaustive_inner_product_seq(
     int nt = std::min(int(nx), omp_get_max_threads());
 
     if (is_dnnl_enabled()) {
-        float *res_arr = (float *)malloc(nx * ny * sizeof(float));
-    //   init_onednn();
-    //     printf("init_onednn\n");
-    //     std::fflush(stdout);
+        float *res_arr = NULL;
 
-        comput_f32bf16f32_inner_product(nx, d, ny, d, const_cast<float*>(x), const_cast<float*>(y), res_arr);
+        comput_f32bf16f32_inner_product(nx, d, ny, d, const_cast<float*>(x), const_cast<float*>(y), &res_arr);
+
+        if (res_arr == NULL) {
+            printf("res_arr = NULL\n");
+            fflush(stderr);
+            exit(1);
+        }
 
     	#pragma omp parallel num_threads(nt)
     	{
@@ -205,10 +208,6 @@ void exhaustive_inner_product_seq(
                 resi.end();
             }
     	}
-
-        delete[] res_arr;
-
-
     } else {
 
 #pragma omp parallel num_threads(nt)

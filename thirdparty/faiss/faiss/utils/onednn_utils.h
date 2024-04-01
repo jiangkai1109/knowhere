@@ -174,7 +174,12 @@ struct inner_product_desc {
     if (is_base_changed.compare_exchange_strong(expected, BASE_DATA_STATE::PREPARE)) {
       pthread_rwlock_wrlock(&rwlock); 
 
-      base_data_handle = _mm_malloc(yrow*ycol*sizeof(u_int16_t), 64);
+      if (base_data_handle != NULL) {
+        free(base_data_handle);
+        base_data_handle = NULL;
+      }
+
+      base_data_handle = malloc(yrow*ycol*sizeof(u_int16_t));
       bf16_mem2 = dnnl::memory(inner_product_pd.weights_desc(), cpu_engine, base_data_handle); 
       dnnl::reorder(f32_mem2, bf16_mem2).execute(engine_stream, f32_mem2, bf16_mem2);      
       inner_product_prim.execute(engine_stream, {{DNNL_ARG_SRC, bf16_mem1},
@@ -187,7 +192,6 @@ struct inner_product_desc {
       
       while(is_base_changed != BASE_DATA_STATE::READY) {
       }
-
       pthread_rwlock_rdlock(&rwlock); 
 
       bf16_mem2 = dnnl::memory(inner_product_pd.weights_desc(), cpu_engine, base_data_handle);  

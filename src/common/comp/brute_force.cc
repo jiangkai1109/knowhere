@@ -91,7 +91,7 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
         BitsetViewIDSelector bw_idselector(bitset);
         faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
 
-	faiss::float_minheap_array_t buf{(size_t)nq, (size_t)topk, labels.get(), distances.get()};
+	    faiss::float_minheap_array_t buf{(size_t)nq, (size_t)topk, labels.get(), distances.get()};
         faiss::knn_inner_product((const float*)xq, (const float*)xb, dim, nq, nb, &buf, id_selector);
     } else {
     auto pool = ThreadPool::GetGlobalSearchThreadPool();

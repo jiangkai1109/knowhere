@@ -19,6 +19,7 @@
 #include "oneapi/dnnl/dnnl.hpp"
 #include <faiss/impl/ResultHandler.h>
 #include <mm_malloc.h>
+#include <unistd.h>
 
 namespace faiss {
 static dnnl::engine cpu_engine;
@@ -95,7 +96,7 @@ enum BASE_DATA_STATE {
   READY
 };
 static std::atomic<BASE_DATA_STATE> is_base_changed(BASE_DATA_STATE::MODIFIED);
-static void* base_data_handle = NULL;
+static dnnl::memory bf16_mem2;
 static pthread_rwlock_t rwlock = PTHREAD_RWLOCK_INITIALIZER;
 
 struct inner_product_desc {
@@ -120,7 +121,6 @@ struct inner_product_desc {
   dnnl::inner_product_forward inner_product_prim;
 
   dnnl::memory bf16_mem1;
-  dnnl::memory bf16_mem2;
   
 
   bool is_same(uint32_t xrow, uint32_t xcol, uint32_t yrow, uint32_t ycol,
@@ -165,7 +165,6 @@ struct inner_product_desc {
     inner_product_prim = dnnl::inner_product_forward(inner_product_pd);     
 
     bf16_mem1 = dnnl::memory(inner_product_pd.src_desc(), cpu_engine);
-    // bf16_mem2 = dnnl::memory(inner_product_pd.weights_desc(), cpu_engine, base_data_handle);    
   }
 
   void execut(float** out_f32) {
@@ -174,13 +173,7 @@ struct inner_product_desc {
     if (is_base_changed.compare_exchange_strong(expected, BASE_DATA_STATE::PREPARE)) {
       pthread_rwlock_wrlock(&rwlock); 
 
-      if (base_data_handle != NULL) {
-        free(base_data_handle);
-        base_data_handle = NULL;
-      }
-
-      base_data_handle = malloc(yrow*ycol*sizeof(u_int16_t));
-      bf16_mem2 = dnnl::memory(inner_product_pd.weights_desc(), cpu_engine, base_data_handle); 
+      bf16_mem2 = dnnl::memory(inner_product_pd.weights_desc(), cpu_engine, DNNL_MEMORY_ALLOCATE);
       dnnl::reorder(f32_mem2, bf16_mem2).execute(engine_stream, f32_mem2, bf16_mem2);      
       inner_product_prim.execute(engine_stream, {{DNNL_ARG_SRC, bf16_mem1},
                                                     {DNNL_ARG_WEIGHTS, bf16_mem2},
@@ -191,10 +184,10 @@ struct inner_product_desc {
     } else {
       
       while(is_base_changed != BASE_DATA_STATE::READY) {
+          usleep(50000);
       }
       pthread_rwlock_rdlock(&rwlock); 
 
-      bf16_mem2 = dnnl::memory(inner_product_pd.weights_desc(), cpu_engine, base_data_handle);  
       inner_product_prim.execute(engine_stream, {{DNNL_ARG_SRC, bf16_mem1},
                                                 {DNNL_ARG_WEIGHTS, bf16_mem2},
                                                 {DNNL_ARG_DST, f32_dst_mem}});

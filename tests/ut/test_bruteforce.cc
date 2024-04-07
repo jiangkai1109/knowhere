@@ -19,13 +19,14 @@
 #include <sys/time.h>
 #include <thread>  
 #include <vector>
-#define MAX_LOOP 2
+#define MAX_LOOP 50
+#define MT 1
 
 TEST_CASE("Test Brute Force", "[float vector]") {
     using Catch::Approx;
 
     const int64_t nb = 2000000;
-    const int64_t nq = 10;
+    const int64_t nq = 1;
     const int64_t dim = 512;
     const int64_t k = 1;
 
@@ -44,19 +45,26 @@ TEST_CASE("Test Brute Force", "[float vector]") {
     SECTION("Test Search") {
      std::vector<std::thread> threads; 
      queryvar queryvar1(train_ds,query_ds,conf);
+     struct timeval t1,t2;
+     double timeuse;
+     gettimeofday(&t1,NULL);
+#ifdef MT
      for (int i = 0; i < MAX_LOOP; i++)
      {
-	threads.emplace_back(WrapSearch, queryvar1);
+	    threads.emplace_back(WrapSearch, queryvar1);
 	//auto res = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, conf, nullptr);
      }
      for (auto& thread : threads) {
         thread.join();
     }
 
-    std::cout << "所有线程已完成执行。" << std::endl;
+#else
+    auto res = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, conf, nullptr);
+#endif
+     gettimeofday(&t2,NULL);
+     timeuse = (t2.tv_sec - t1.tv_sec) + (double)(t2.tv_usec - t1.tv_usec)/1000000.0;
 
-
-
+     std::cout << "所有线程已完成执行。" << std::endl;
 
     }
 #if 0

@@ -18,6 +18,7 @@
 #include "knowhere/bitsetview.h"
 #include "knowhere/dataset.h"
 #include "knowhere/factory.h"
+#include "faiss/utils/onednn_utils.h"
 #include "knowhere/index_node.h"
 #include "knowhere/operands.h"
 

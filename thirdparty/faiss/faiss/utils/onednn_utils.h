@@ -91,11 +91,18 @@ static void library_load() {
  */
 
 enum BASE_DATA_STATE {
+  INIT,
   MODIFIED,
   PREPARE,
   READY
 };
-static std::atomic<BASE_DATA_STATE> is_base_changed(BASE_DATA_STATE::MODIFIED);
+class BaseData {
+public:
+    static std::atomic<BASE_DATA_STATE>& getState() {
+        static std::atomic<BASE_DATA_STATE> is_base_changed(BASE_DATA_STATE::INIT);
+        return is_base_changed;
+    }
+};
 static dnnl::memory bf16_mem2;
 static pthread_rwlock_t rwlock = PTHREAD_RWLOCK_INITIALIZER;
 
@@ -170,34 +177,27 @@ struct inner_product_desc {
   void execut(float** out_f32) {
     dnnl::reorder(f32_mem1, bf16_mem1).execute(engine_stream, f32_mem1, bf16_mem1);
     BASE_DATA_STATE expected = BASE_DATA_STATE::MODIFIED;
-    if (is_base_changed.compare_exchange_strong(expected, BASE_DATA_STATE::PREPARE)) {
+    
+    if (BaseData::getState().compare_exchange_strong(expected, BASE_DATA_STATE::PREPARE)) {
       pthread_rwlock_wrlock(&rwlock); 
 
-      bf16_mem2 = dnnl::memory(inner_product_pd.weights_desc(), cpu_engine, DNNL_MEMORY_ALLOCATE);
+      bf16_mem2 = dnnl::memory(inner_product_pd.weights_desc(), cpu_engine,  DNNL_MEMORY_ALLOCATE); 
       dnnl::reorder(f32_mem2, bf16_mem2).execute(engine_stream, f32_mem2, bf16_mem2);      
       inner_product_prim.execute(engine_stream, {{DNNL_ARG_SRC, bf16_mem1},
                                                     {DNNL_ARG_WEIGHTS, bf16_mem2},
-                                                    {DNNL_ARG_DST, f32_dst_mem}});
-      is_base_changed.store(BASE_DATA_STATE::READY);
-      pthread_rwlock_unlock(&rwlock);                                                    
-
+                                                    {DNNL_ARG_DST, f32_dst_mem}});      
+      pthread_rwlock_unlock(&rwlock);                                             
+      BaseData::getState().store(BASE_DATA_STATE::READY);       
     } else {
-      
-      while(is_base_changed != BASE_DATA_STATE::READY) {
-          usleep(50000);
+      while(BaseData::getState() != BASE_DATA_STATE::READY) {
+        usleep(50000);
       }
-      pthread_rwlock_rdlock(&rwlock); 
 
+      pthread_rwlock_rdlock(&rwlock);   
       inner_product_prim.execute(engine_stream, {{DNNL_ARG_SRC, bf16_mem1},
                                                 {DNNL_ARG_WEIGHTS, bf16_mem2},
                                                 {DNNL_ARG_DST, f32_dst_mem}});
       pthread_rwlock_unlock(&rwlock);
-    }
-
-    if (f32_dst_mem.get_data_handle() == NULL) {
-        printf("f32_dst_mem.get_data_handle()  = NULL\n");
-        fflush(stderr);
-        exit(1);
     }
 
     *out_f32 = (float*) f32_dst_mem.get_data_handle();

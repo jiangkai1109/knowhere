@@ -45,6 +45,7 @@ TEST_CASE("Test Brute Force", "[float vector]") {
     SECTION("Test Search") {
      std::vector<std::thread> threads; 
      queryvar queryvar1(train_ds,query_ds,conf);
+     faiss::BaseData::getState().store(faiss::BASE_DATA_STATE::MODIFIED);       
      struct timeval t1,t2;
      double timeuse;
      gettimeofday(&t1,NULL);
